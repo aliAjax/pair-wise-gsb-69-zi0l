@@ -20,6 +20,8 @@ export interface ChangeResource {
   type: ResourceType;
   critical: boolean;
   dependencies: string[];
+  /** 占用的容量数量（机柜位 / 上联通道 / 服务实例），缺省按 1 计。 */
+  capacityDemand?: number;
 }
 
 export interface ChangeStep {
@@ -78,6 +80,8 @@ export interface ChangeRequest {
   approvals: ApprovalRecord[];
   deviations: DeviationRecord[];
   audit: AuditRecord[];
+  /** 乐观并发版本号，每次成功写入递增，用于多标签页冲突检测。 */
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -149,7 +153,7 @@ export function createEmptyChange(): ChangeRequest {
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
   return {
-    id: `CHG-${Math.floor(1000 + Math.random() * 9000)}`,
+    id: `CHG-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
     title: '',
     summary: '',
     owner: '',
@@ -167,6 +171,7 @@ export function createEmptyChange(): ChangeRequest {
     approvals: createEmptyApprovals(),
     deviations: [],
     audit: [],
+    version: 0,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   };

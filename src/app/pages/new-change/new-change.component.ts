@@ -2,20 +2,32 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
+import { Actions, ofType } from '@ngrx/effects';
 import { Store } from '@ngrx/store';
+import { filter, take } from 'rxjs';
 import { ValidationPanelComponent } from '../../components/validation-panel/validation-panel.component';
 import {
-  APPROVAL_ORDER,
+  CAPACITY_TYPE_LABELS,
+  CapacityPoolType,
+  previewCapacity,
+} from '../../models/capacity.model';
+import {
   ChangeRequest,
   ChangeStep,
   RESOURCE_LABELS,
   ResourceType,
   StepPhase,
+  createEmptyApprovals,
   createEmptyChange,
   validateChange,
 } from '../../models/change-request.model';
 import { ChangeRequestActions } from '../../store/change-request.actions';
-import { selectAllChanges } from '../../store/change-request.selectors';
+import {
+  selectAllChanges,
+  selectNotice,
+  selectPools,
+  selectReservations,
+} from '../../store/change-request.selectors';
 
 @Component({
   selector: 'app-new-change',
@@ -131,6 +143,16 @@ import { selectAllChanges } from '../../store/change-request.selectors';
               placeholder="逗号分隔"
             />
           </clr-input-container>
+          <clr-input-container>
+            <label>容量占用</label>
+            <input
+              clrNumberInput
+              type="number"
+              min="1"
+              [ngModel]="resourceDemand()"
+              (ngModelChange)="resourceDemand.set(toDemand($event))"
+            />
+          </clr-input-container>
           <button class="btn" type="button" (click)="addResource()">添加资源</button>
         </div>
 
@@ -141,7 +163,10 @@ import { selectAllChanges } from '../../store/change-request.selectors';
                 <strong>{{ resource.name }}</strong>
                 <span>{{ resource.id }} · {{ resourceLabel(resource.type) }}</span>
               </div>
-              <span>依赖：{{ resource.dependencies.join('、') || '无' }}</span>
+              <span>
+                依赖：{{ resource.dependencies.join('、') || '无' }} · 容量占用
+                {{ resource.capacityDemand ?? 1 }}
+              </span>
               <button class="btn btn-sm btn-link" type="button" (click)="removeResource(resource.id)">
                 移除
               </button>
@@ -247,6 +272,56 @@ import { selectAllChanges } from '../../store/change-request.selectors';
         <div class="section-heading">
           <span>05</span>
           <div>
+            <h2>容量预检</h2>
+            <p>提交前按窗口预留机柜、网络、服务容量；严重变更同机房同时段最多 2 项。</p>
+          </div>
+        </div>
+        @if (capacityPreview().lines.length) {
+          <table class="capacity-table">
+            <thead>
+              <tr>
+                <th>机房</th>
+                <th>容量池</th>
+                <th>本次需求</th>
+                <th>同时段已预留</th>
+                <th>池总量</th>
+                <th>预检结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (line of capacityPreview().lines; track line.datacenterId + line.type) {
+                <tr [class.short]="line.amount > line.available">
+                  <td>{{ line.datacenterName }}</td>
+                  <td>{{ capacityTypeLabel(line.type) }}</td>
+                  <td>{{ line.amount }}</td>
+                  <td>{{ line.reserved }} / {{ line.total }}</td>
+                  <td>{{ line.total }} {{ line.unit }}</td>
+                  <td>
+                    @if (line.amount > line.available) {
+                      <span class="precheck-bad">不足（仅剩 {{ line.available }}）</span>
+                    } @else {
+                      <span class="precheck-ok">可预留</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        } @else {
+          <p class="empty">添加机柜、网络或服务类资源后，将在此按窗口预检容量。</p>
+        }
+        @for (issue of capacityPreview().issues; track issue.title) {
+          <article class="capacity-issue">
+            <strong>{{ issue.title }}</strong>
+            <p>{{ issue.detail }}</p>
+          </article>
+        }
+      </section>
+
+      <section class="form-surface">
+        <div class="section-heading">
+          <span>06</span>
+          <div>
             <h2>提交前校验</h2>
             <p>阻断项未清零时仍可保存草稿，但会阻止进入会签。</p>
           </div>
@@ -254,6 +329,26 @@ import { selectAllChanges } from '../../store/change-request.selectors';
         <app-validation-panel [change]="draft()" [allChanges]="allChanges()" />
       </section>
     </div>
+
+    @if (notice(); as activeNotice) {
+      <div class="commit-notice" [class]="activeNotice.kind">
+        <div>
+          <strong>
+            {{ activeNotice.kind === 'conflict' ? '版本冲突' : activeNotice.kind === 'capacity' ? '容量不足，提交被拒绝' : '写入失败' }}
+          </strong>
+          <p>{{ activeNotice.message }}</p>
+          @for (issue of activeNotice.issues ?? []; track issue.title) {
+            <p class="notice-issue">· {{ issue.title }}：{{ issue.detail }}</p>
+          }
+          @if (activeNotice.kind === 'conflict') {
+            <button class="btn btn-sm" type="button" (click)="regenerateId()">
+              换用新编号重新保存
+            </button>
+          }
+        </div>
+        <button class="btn btn-sm btn-link" type="button" (click)="dismissNotice()">知道了</button>
+      </div>
+    }
 
     <footer class="action-bar">
       <button class="btn" type="button" (click)="cancel()">取消</button>
@@ -345,7 +440,7 @@ import { selectAllChanges } from '../../store/change-request.selectors';
       .inline-form,
       .step-grid {
         display: grid;
-        grid-template-columns: repeat(5, minmax(130px, 1fr));
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
         align-items: end;
         gap: 12px;
         margin-bottom: 18px;
@@ -353,6 +448,83 @@ import { selectAllChanges } from '../../store/change-request.selectors';
 
       .step-grid {
         grid-template-columns: repeat(5, minmax(130px, 1fr));
+      }
+
+      .capacity-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+      }
+
+      .capacity-table th,
+      .capacity-table td {
+        padding: 9px 12px;
+        border-bottom: 1px solid #e6e6e6;
+        font-size: 12px;
+      }
+
+      .capacity-table th {
+        background: #f7f8f8;
+        color: #666;
+        font-size: 11px;
+      }
+
+      .capacity-table tr.short td {
+        background: #fbece8;
+      }
+
+      .precheck-ok {
+        color: #286140;
+      }
+
+      .precheck-bad {
+        color: #8e260f;
+        font-weight: 600;
+      }
+
+      .capacity-issue {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-left: 3px solid #c21d00;
+        background: #fbece8;
+      }
+
+      .capacity-issue p {
+        margin: 6px 0 0;
+        color: #5f5f5f;
+        font-size: 12px;
+      }
+
+      .commit-notice {
+        position: sticky;
+        bottom: 76px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 18px;
+        padding: 14px 18px;
+        border: 1px solid #d58d7e;
+        background: #fbece8;
+      }
+
+      .commit-notice.conflict {
+        border-color: #d0a251;
+        background: #fff7e6;
+      }
+
+      .commit-notice p {
+        margin: 6px 0 0;
+        color: #5f5f5f;
+        font-size: 12px;
+      }
+
+      .commit-notice .notice-issue {
+        color: #8e260f;
+      }
+
+      .commit-notice .btn {
+        margin-top: 10px;
       }
 
       .item-list {
@@ -431,12 +603,18 @@ import { selectAllChanges } from '../../store/change-request.selectors';
 export class NewChangeComponent {
   private readonly store = inject(Store);
   private readonly router = inject(Router);
+  private readonly actions$ = inject(Actions);
 
   readonly allChanges = this.store.selectSignal(selectAllChanges);
+  private readonly pools = this.store.selectSignal(selectPools);
+  private readonly reservations = this.store.selectSignal(selectReservations);
+  private readonly storeNotice = this.store.selectSignal(selectNotice);
+
   readonly draft = signal<ChangeRequest>(createEmptyChange());
   readonly resourceId = signal('');
   readonly resourceName = signal('');
   readonly resourceType = signal<ResourceType>('service');
+  readonly resourceDemand = signal(1);
   readonly dependencyText = signal('');
   readonly stepTitle = signal('');
   readonly stepPhase = signal<StepPhase>('execute');
@@ -452,6 +630,23 @@ export class NewChangeComponent {
       this.draft().resources.length === 0 ||
       this.draft().steps.length === 0,
   );
+
+  /** 容量预检：实时展示，最终以下笔提交时的台账门禁为准。 */
+  readonly capacityPreview = computed(() =>
+    previewCapacity(this.draft(), this.pools(), this.reservations(), this.allChanges()),
+  );
+
+  /** 只展示与本草稿相关的提交结果通知。 */
+  readonly notice = computed(() => {
+    const notice = this.storeNotice();
+    if (!notice) {
+      return null;
+    }
+    if (notice.kind === 'persist-failure') {
+      return notice;
+    }
+    return notice.changeId === this.draft().id ? notice : null;
+  });
 
   onCallText(): string {
     return this.draft().onCall.join('、');
@@ -507,12 +702,14 @@ export class NewChangeComponent {
             .split(/[、,，]/)
             .map((item) => item.trim())
             .filter(Boolean),
+          capacityDemand: this.resourceDemand(),
         },
       ],
     }));
     this.resourceId.set('');
     this.resourceName.set('');
     this.dependencyText.set('');
+    this.resourceDemand.set(1);
   }
 
   removeResource(id: string): void {
@@ -563,15 +760,40 @@ export class NewChangeComponent {
   }
 
   save(submit: boolean): void {
-    const draft = {
+    const change: ChangeRequest = {
       ...this.draft(),
-      approvals: APPROVAL_ORDER.map((stage) => ({ stage, state: 'pending' as const })),
+      approvals: createEmptyApprovals(),
     };
-    this.store.dispatch(ChangeRequestActions.createChange({ change: draft }));
-    if (submit) {
-      this.store.dispatch(ChangeRequestActions.submitForReview({ id: draft.id }));
-    }
-    void this.router.navigate(['/changes', draft.id]);
+    // 先订阅再派发：提交流水线是同步的，成功后才跳转；容量不足或版本冲突时留在本页并保留草稿。
+    this.actions$
+      .pipe(
+        ofType(ChangeRequestActions.saveChangeSuccess),
+        filter((action) => action.changeId === change.id),
+        take(1),
+      )
+      .subscribe(() => void this.router.navigate(['/changes', change.id]));
+    this.store.dispatch(ChangeRequestActions.saveChangeRequested({ change, submit }));
+  }
+
+  regenerateId(): void {
+    this.draft.update((draft) => ({
+      ...draft,
+      id: createEmptyChange().id,
+    }));
+    this.dismissNotice();
+  }
+
+  dismissNotice(): void {
+    this.store.dispatch(ChangeRequestActions.dismissNotice());
+  }
+
+  toDemand(value: string | number): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 1;
+  }
+
+  capacityTypeLabel(type: CapacityPoolType): string {
+    return CAPACITY_TYPE_LABELS[type];
   }
 
   cancel(): void {

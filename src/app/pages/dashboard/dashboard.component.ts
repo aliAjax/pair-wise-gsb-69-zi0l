@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { Store } from '@ngrx/store';
+import { CapacityLedgerPanelComponent } from '../../components/capacity-ledger/capacity-ledger-panel.component';
 import { WindowGanttComponent } from '../../components/window-gantt/window-gantt.component';
 import {
   ChangeStatus,
@@ -18,12 +19,14 @@ import {
   selectAllChanges,
   selectChangesError,
   selectChangesLoading,
+  selectPools,
+  selectReservations,
 } from '../../store/change-request.selectors';
 
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, FormsModule, RouterLink, ClarityModule, WindowGanttComponent],
+  imports: [DatePipe, FormsModule, RouterLink, ClarityModule, WindowGanttComponent, CapacityLedgerPanelComponent],
   template: `
     <section class="page-heading">
       <div>
@@ -174,6 +177,20 @@ import {
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section class="work-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>容量台账</h2>
+          <span>提交前按窗口预留机柜、网络、服务容量；严重变更同机房同时段最多 2 项</span>
+        </div>
+      </div>
+      <app-capacity-ledger-panel
+        [pools]="pools()"
+        [reservations]="reservations()"
+        [changes]="changes()"
+      />
     </section>
 
     <section class="work-panel">
@@ -419,6 +436,8 @@ export class DashboardComponent {
   private readonly store = inject(Store);
 
   readonly changes = this.store.selectSignal(selectAllChanges);
+  readonly reservations = this.store.selectSignal(selectReservations);
+  readonly pools = this.store.selectSignal(selectPools);
   readonly loading = this.store.selectSignal(selectChangesLoading);
   readonly error = this.store.selectSignal(selectChangesError);
 

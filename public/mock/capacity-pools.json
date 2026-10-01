@@ -1,0 +1,11 @@
+[
+  { "datacenterId": "dc-east-1", "datacenterName": "华东一区", "type": "rack", "total": 4, "unit": "个机柜位" },
+  { "datacenterId": "dc-east-1", "datacenterName": "华东一区", "type": "network", "total": 3, "unit": "条上联通道" },
+  { "datacenterId": "dc-east-1", "datacenterName": "华东一区", "type": "service", "total": 4, "unit": "个服务实例" },
+  { "datacenterId": "dc-east-2", "datacenterName": "华东二区", "type": "rack", "total": 3, "unit": "个机柜位" },
+  { "datacenterId": "dc-east-2", "datacenterName": "华东二区", "type": "network", "total": 2, "unit": "条上联通道" },
+  { "datacenterId": "dc-east-2", "datacenterName": "华东二区", "type": "service", "total": 3, "unit": "个服务实例" },
+  { "datacenterId": "dc-unassigned", "datacenterName": "未分配机房", "type": "rack", "total": 2, "unit": "个机柜位" },
+  { "datacenterId": "dc-unassigned", "datacenterName": "未分配机房", "type": "network", "total": 2, "unit": "条上联通道" },
+  { "datacenterId": "dc-unassigned", "datacenterName": "未分配机房", "type": "service", "total": 2, "unit": "个服务实例" }
+]

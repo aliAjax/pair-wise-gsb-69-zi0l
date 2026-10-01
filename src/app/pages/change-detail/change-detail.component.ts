@@ -9,11 +9,14 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
+import { Actions, ofType } from '@ngrx/effects';
 import { Store } from '@ngrx/store';
+import { filter, take } from 'rxjs';
 import { AuditTrailComponent } from '../../components/audit-trail/audit-trail.component';
 import { DependencyGraphComponent } from '../../components/dependency-graph/dependency-graph.component';
 import { ValidationPanelComponent } from '../../components/validation-panel/validation-panel.component';
 import { WindowGanttComponent } from '../../components/window-gantt/window-gantt.component';
+import { CAPACITY_TYPE_LABELS, CapacityPoolType } from '../../models/capacity.model';
 import {
   ApprovalStage,
   ChangeRequest,
@@ -28,7 +31,12 @@ import {
 } from '../../models/change-request.model';
 import { ChangeRequestService } from '../../services/change-request.service';
 import { ChangeRequestActions } from '../../store/change-request.actions';
-import { selectAllChanges } from '../../store/change-request.selectors';
+import {
+  selectAllChanges,
+  selectNotice,
+  selectPools,
+  selectReservationsByChange,
+} from '../../store/change-request.selectors';
 
 type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval' | 'audit';
 
@@ -70,11 +78,40 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
             <strong>{{ riskLabel(item.risk) }}</strong>
           </div>
           <div>
+            <span>版本</span>
+            <strong>v{{ item.version }}</strong>
+          </div>
+          <div>
             <span>更新</span>
             <strong>{{ item.updatedAt | date: 'MM-dd HH:mm' }}</strong>
           </div>
         </div>
       </section>
+
+      @if (notice(); as activeNotice) {
+        <div class="commit-notice" [class]="activeNotice.kind" role="alert">
+          <div>
+            <strong>
+              {{ activeNotice.kind === 'conflict' ? '版本冲突：另一窗口已先行保存' : activeNotice.kind === 'capacity' ? '容量不足，提交被拒绝' : '写入失败' }}
+            </strong>
+            <p>{{ activeNotice.message }}</p>
+            @for (issue of activeNotice.issues ?? []; track issue.title) {
+              <p class="notice-issue">· {{ issue.title }}：{{ issue.detail }}</p>
+            }
+            @if (activeNotice.kind === 'conflict' && editing()) {
+              <div class="notice-actions">
+                <button class="btn btn-sm" type="button" (click)="rebaseDraft()">
+                  保留我的修改，基于最新版本继续
+                </button>
+                <button class="btn btn-sm btn-link" type="button" (click)="cancelEdit()">
+                  放弃我的修改
+                </button>
+              </div>
+            }
+          </div>
+          <button class="btn btn-sm btn-link" type="button" (click)="dismissNotice()">知道了</button>
+        </div>
+      }
 
       <nav class="tab-nav" aria-label="变更详情">
         @for (tab of tabs; track tab.id) {
@@ -159,6 +196,11 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
                     </clr-input-container>
                   </div>
                   <div class="edit-actions">
+                    @if (item.status === 'submitted' || item.status === 'approved') {
+                      <p class="reset-warning">
+                        方案正在会签中：保存后既有会签将失效，并从网络负责人重新开始会签。
+                      </p>
+                    }
                     <button class="btn btn-primary" type="button" (click)="saveEdit()">保存方案</button>
                   </div>
                 </div>
@@ -188,6 +230,33 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
             </section>
 
             <app-validation-panel [change]="item" [allChanges]="changes()" />
+
+            <section class="surface span-2">
+              <div class="surface-heading">
+                <div>
+                  <h2>容量预留</h2>
+                  <span>提交时按窗口预留机柜、网络、服务容量，结束或退回后自动释放</span>
+                </div>
+              </div>
+              <div class="reservation-list">
+                @for (reservation of reservations(); track reservation.id) {
+                  <article [class.released]="reservation.status === 'released'">
+                    <span class="type">{{ capacityTypeLabel(reservation.type) }}</span>
+                    <div>
+                      <strong>{{ datacenterName(reservation.datacenterId) }}</strong>
+                      <small>
+                        {{ reservation.windowStart | date: 'MM-dd HH:mm' }} 至
+                        {{ reservation.windowEnd | date: 'MM-dd HH:mm' }}
+                      </small>
+                    </div>
+                    <span>预留 {{ reservation.amount }}</span>
+                    <span>{{ reservation.status === 'active' ? '占用中' : '已释放' }}</span>
+                  </article>
+                } @empty {
+                  <p class="empty">当前没有容量预留：草稿不占用容量，提交审批时按窗口预留。</p>
+                }
+              </div>
+            </section>
 
             <section class="surface span-2">
               <div class="surface-heading">
@@ -553,7 +622,7 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
 
       .heading-meta {
         display: grid;
-        grid-template-columns: repeat(3, minmax(90px, 1fr));
+        grid-template-columns: repeat(4, minmax(90px, 1fr));
         align-self: end;
         border: 1px solid #d7d7d7;
         background: #fff;
@@ -610,6 +679,67 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
         border-color: #d58d7e;
         background: #fbece8;
         color: #8e260f;
+      }
+
+      .commit-notice {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 16px 0 0;
+        padding: 14px 18px;
+        border: 1px solid #d58d7e;
+        background: #fbece8;
+      }
+
+      .commit-notice.conflict {
+        border-color: #d0a251;
+        background: #fff7e6;
+      }
+
+      .commit-notice p {
+        margin: 6px 0 0;
+        color: #5f5f5f;
+        font-size: 12px;
+      }
+
+      .commit-notice .notice-issue {
+        color: #8e260f;
+      }
+
+      .notice-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .reset-warning {
+        flex: 1;
+        margin: 0;
+        align-self: center;
+        color: #8e260f;
+        font-size: 12px;
+      }
+
+      .reservation-list article {
+        display: grid;
+        grid-template-columns: 80px minmax(180px, 1fr) 100px 100px;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 4px;
+        border-bottom: 1px solid #e6e6e6;
+      }
+
+      .reservation-list article:last-child {
+        border-bottom: 0;
+      }
+
+      .reservation-list article.released {
+        color: #8a8a8a;
+      }
+
+      .reservation-list small {
+        color: #6b6b6b;
       }
 
       .tab-nav {
@@ -976,10 +1106,14 @@ export class ChangeDetailComponent {
   private readonly store = inject(Store);
   private readonly route = inject(ActivatedRoute);
   private readonly service = inject(ChangeRequestService);
+  private readonly actions$ = inject(Actions);
   private readonly changeId = this.route.snapshot.paramMap.get('id') ?? '';
 
   readonly changes = this.store.selectSignal(selectAllChanges);
+  private readonly pools = this.store.selectSignal(selectPools);
+  private readonly storeNotice = this.store.selectSignal(selectNotice);
   readonly change = computed(() => this.changes().find((item) => item.id === this.changeId));
+  readonly reservations = this.store.selectSignal(selectReservationsByChange(this.changeId));
   readonly selectedTab = signal<DetailTab>('overview');
   readonly editing = signal(false);
   readonly draft = signal<ChangeRequest | null>(null);
@@ -987,6 +1121,18 @@ export class ChangeDetailComponent {
   readonly approvalComment = signal('');
   readonly deviationText = signal('');
   readonly deviationDecision = signal<DeviationRecord['decision']>('continue');
+
+  /** 只展示与本变更相关的提交结果通知（容量拒绝、版本冲突、写入失败）。 */
+  readonly notice = computed(() => {
+    const notice = this.storeNotice();
+    if (!notice) {
+      return null;
+    }
+    if (notice.kind === 'persist-failure') {
+      return notice;
+    }
+    return notice.changeId === this.changeId ? notice : null;
+  });
 
   readonly tabs: Array<{ id: DetailTab; label: string }> = [
     { id: 'overview', label: '方案概览' },
@@ -1058,9 +1204,44 @@ export class ChangeDetailComponent {
     if (!draft) {
       return;
     }
-    this.store.dispatch(ChangeRequestActions.updateChange({ change: draft }));
-    this.editing.set(false);
-    this.draft.set(null);
+    // 先订阅再派发：提交流水线是同步的，成功后才退出编辑；容量不足或版本冲突时停留编辑态并展示通知。
+    this.actions$
+      .pipe(
+        ofType(ChangeRequestActions.saveChangeSuccess),
+        filter((action) => action.changeId === draft.id),
+        take(1),
+      )
+      .subscribe(() => {
+        this.editing.set(false);
+        this.draft.set(null);
+      });
+    this.store.dispatch(ChangeRequestActions.saveChangeRequested({ change: draft, submit: false }));
+  }
+
+  /** 版本冲突后：保留当前编辑内容，把基线版本对齐到最新台账，再保存即生效。 */
+  rebaseDraft(): void {
+    const notice = this.notice();
+    if (!notice || notice.kind !== 'conflict' || notice.latestVersion === undefined) {
+      return;
+    }
+    const latestVersion = notice.latestVersion;
+    this.draft.update((draft) => (draft ? { ...draft, version: latestVersion } : draft));
+    this.dismissNotice();
+  }
+
+  dismissNotice(): void {
+    this.store.dispatch(ChangeRequestActions.dismissNotice());
+  }
+
+  capacityTypeLabel(type: CapacityPoolType): string {
+    return CAPACITY_TYPE_LABELS[type];
+  }
+
+  datacenterName(datacenterId: string): string {
+    return (
+      this.pools().find((pool) => pool.datacenterId === datacenterId)?.datacenterName ??
+      datacenterId
+    );
   }
 
   submitForReview(): void {
