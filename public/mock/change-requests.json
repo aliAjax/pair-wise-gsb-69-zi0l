@@ -120,6 +120,14 @@
         "detail": "提交网络、系统、安全、业务顺序会签。"
       }
     ],
+    "capacity": {
+      "datacenterId": "dc-east-1",
+      "rackUnits": 8,
+      "networkGbps": 40,
+      "serviceSlots": 2
+    },
+    "reservationIds": ["RSV-24031"],
+    "version": 1,
     "createdAt": "2026-09-27T08:20:00.000Z",
     "updatedAt": "2026-09-29T02:15:00.000Z"
   },
@@ -254,6 +262,14 @@
         "detail": "审批冻结，进入执行状态。"
       }
     ],
+    "capacity": {
+      "datacenterId": "dc-north-2",
+      "rackUnits": 6,
+      "networkGbps": 20,
+      "serviceSlots": 1
+    },
+    "reservationIds": ["RSV-24028"],
+    "version": 1,
     "createdAt": "2026-09-26T03:22:00.000Z",
     "updatedAt": "2026-09-29T00:42:00.000Z"
   },
@@ -344,6 +360,14 @@
         "detail": "创建证书轮换变更草稿。"
       }
     ],
+    "capacity": {
+      "datacenterId": "dc-east-1",
+      "rackUnits": 2,
+      "networkGbps": 5,
+      "serviceSlots": 1
+    },
+    "reservationIds": [],
+    "version": 1,
     "createdAt": "2026-09-28T11:32:00.000Z",
     "updatedAt": "2026-09-28T11:32:00.000Z"
   },
@@ -431,6 +455,14 @@
         "detail": "观察期内日志写入正常。"
       }
     ],
+    "capacity": {
+      "datacenterId": "dc-east-1",
+      "rackUnits": 0,
+      "networkGbps": 2,
+      "serviceSlots": 1
+    },
+    "reservationIds": [],
+    "version": 1,
     "createdAt": "2026-09-25T08:00:00.000Z",
     "updatedAt": "2026-09-27T03:05:00.000Z"
   }

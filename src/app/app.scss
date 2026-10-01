@@ -98,6 +98,43 @@ nav a:hover {
   margin-left: auto;
 }
 
+.global-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 28px;
+  font-size: 12px;
+}
+
+.global-banner.conflict {
+  border-bottom: 1px solid #d58d7e;
+  background: #fbece8;
+  color: #8e260f;
+}
+
+.global-banner.persistence {
+  border-bottom: 1px solid #d0a251;
+  background: #fff7e6;
+  color: #7c5000;
+}
+
+.global-banner div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.global-banner em {
+  margin-right: 8px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.global-banner .btn {
+  flex-shrink: 0;
+}
+
 .app-content {
   width: min(1480px, calc(100% - 48px));
   margin: 0 auto;

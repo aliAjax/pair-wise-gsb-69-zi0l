@@ -4,7 +4,9 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { Store } from '@ngrx/store';
+import { CapacityLedgerComponent } from '../../components/capacity-ledger/capacity-ledger.component';
 import { WindowGanttComponent } from '../../components/window-gantt/window-gantt.component';
+import { validateCapacity } from '../../models/capacity.model';
 import {
   ChangeStatus,
   RESOURCE_LABELS,
@@ -18,12 +20,13 @@ import {
   selectAllChanges,
   selectChangesError,
   selectChangesLoading,
+  selectLedger,
 } from '../../store/change-request.selectors';
 
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, FormsModule, RouterLink, ClarityModule, WindowGanttComponent],
+  imports: [DatePipe, FormsModule, RouterLink, ClarityModule, WindowGanttComponent, CapacityLedgerComponent],
   template: `
     <section class="page-heading">
       <div>
@@ -174,6 +177,16 @@ import {
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section class="work-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>容量台账</h2>
+          <span>提交审批即预留，退回、完成或回滚自动释放</span>
+        </div>
+      </div>
+      <app-capacity-ledger [ledger]="ledger()" [changes]="changes()" />
     </section>
 
     <section class="work-panel">
@@ -419,6 +432,7 @@ export class DashboardComponent {
   private readonly store = inject(Store);
 
   readonly changes = this.store.selectSignal(selectAllChanges);
+  readonly ledger = this.store.selectSignal(selectLedger);
   readonly loading = this.store.selectSignal(selectChangesLoading);
   readonly error = this.store.selectSignal(selectChangesError);
 
@@ -456,8 +470,10 @@ export class DashboardComponent {
 
   readonly blockedCount = computed(
     () =>
-      this.changes().filter((change) =>
-        validateChange(change, this.changes()).some((issue) => issue.severity === 'blocker'),
+      this.changes().filter(
+        (change) =>
+          validateChange(change, this.changes()).some((issue) => issue.severity === 'blocker') ||
+          validateCapacity(change, this.changes(), this.ledger()).length > 0,
       ).length,
   );
 
@@ -475,7 +491,10 @@ export class DashboardComponent {
 
   issueCount(changeId: string): number {
     const change = this.changes().find((item) => item.id === changeId);
-    return change ? validateChange(change, this.changes()).length : 0;
+    return change
+      ? validateChange(change, this.changes()).length +
+          validateCapacity(change, this.changes(), this.ledger()).length
+      : 0;
   }
 
   statusLabel(status: ChangeStatus): string {

@@ -1,0 +1,40 @@
+{
+  "pools": [
+    {
+      "datacenterId": "dc-east-1",
+      "datacenterName": "华东一区",
+      "rackUnits": 84,
+      "networkGbps": 400,
+      "serviceSlots": 24,
+      "maxCriticalChanges": 2
+    },
+    {
+      "datacenterId": "dc-north-2",
+      "datacenterName": "华北二区",
+      "rackUnits": 60,
+      "networkGbps": 240,
+      "serviceSlots": 16,
+      "maxCriticalChanges": 2
+    }
+  ],
+  "reservations": [
+    {
+      "id": "RSV-24031",
+      "changeId": "CHG-24031",
+      "datacenterId": "dc-east-1",
+      "window": { "start": "2026-09-30T01:00", "end": "2026-09-30T05:00" },
+      "demand": { "rackUnits": 8, "networkGbps": 40, "serviceSlots": 2 },
+      "status": "reserved",
+      "createdAt": "2026-09-28T09:40:00.000Z"
+    },
+    {
+      "id": "RSV-24028",
+      "changeId": "CHG-24028",
+      "datacenterId": "dc-north-2",
+      "window": { "start": "2026-09-29T00:00", "end": "2026-09-29T04:00" },
+      "demand": { "rackUnits": 6, "networkGbps": 20, "serviceSlots": 1 },
+      "status": "reserved",
+      "createdAt": "2026-09-28T05:00:00.000Z"
+    }
+  ]
+}

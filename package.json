@@ -6,7 +6,8 @@
     "start": "ng serve --port 18469",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "check:rules": "esbuild sanity-check.mts --bundle --platform=node --format=esm --outfile=node_modules/.cache/sanity-check.mjs && node node_modules/.cache/sanity-check.mjs"
   },
   "private": true,
   "packageManager": "npm@10.9.8",

@@ -26,9 +26,14 @@ import {
   STATUS_LABELS,
   validateChange,
 } from '../../models/change-request.model';
+import { demandLabel, reservationsForChange } from '../../models/capacity.model';
 import { ChangeRequestService } from '../../services/change-request.service';
 import { ChangeRequestActions } from '../../store/change-request.actions';
-import { selectAllChanges } from '../../store/change-request.selectors';
+import {
+  selectAllChanges,
+  selectCapacityError,
+  selectLedger,
+} from '../../store/change-request.selectors';
 
 type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval' | 'audit';
 
@@ -111,6 +116,20 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
               </div>
 
               @if (editing()) {
+                @if (item.status === 'submitted') {
+                  <div class="edit-warning">
+                    方案正在会签中：保存后已有会签立即失效，将从网络负责人重新会签，并按新方案重新预留容量。
+                  </div>
+                }
+                @if (capacityError(); as error) {
+                  <clr-alert clrAlertType="danger" [clrAlertClosable]="false">
+                    <clr-alert-item>
+                      <span class="alert-text">
+                        保存被拒绝：{{ error.reasons.join('；') }}。修改未生效，可调整后再次保存。
+                      </span>
+                    </clr-alert-item>
+                  </clr-alert>
+                }
                 <div class="edit-form">
                   <clr-input-container>
                     <label>标题</label>
@@ -183,11 +202,19 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
                     <dt>当前门禁</dt>
                     <dd>{{ pendingStage() ? stageLabel(pendingStage()!) + '待会签' : approvalGate() }}</dd>
                   </div>
+                  <div>
+                    <dt>容量需求</dt>
+                    <dd>{{ demandText(item) }}</dd>
+                  </div>
+                  <div>
+                    <dt>容量预留</dt>
+                    <dd>{{ reservationText(item) }}</dd>
+                  </div>
                 </dl>
               }
             </section>
 
-            <app-validation-panel [change]="item" [allChanges]="changes()" />
+            <app-validation-panel [change]="item" [allChanges]="changes()" [ledger]="ledger()" />
 
             <section class="surface span-2">
               <div class="surface-heading">
@@ -711,6 +738,15 @@ type DetailTab = 'overview' | 'dependency' | 'window' | 'execution' | 'approval'
         padding-top: 18px;
       }
 
+      .edit-warning {
+        margin-top: 16px;
+        padding: 12px 14px;
+        border-left: 3px solid #d99000;
+        background: #fff7e6;
+        color: #7c5000;
+        font-size: 12px;
+      }
+
       .edit-grid,
       .deviation-actions {
         display: grid;
@@ -979,6 +1015,8 @@ export class ChangeDetailComponent {
   private readonly changeId = this.route.snapshot.paramMap.get('id') ?? '';
 
   readonly changes = this.store.selectSignal(selectAllChanges);
+  readonly ledger = this.store.selectSignal(selectLedger);
+  private readonly storeCapacityError = this.store.selectSignal(selectCapacityError);
   readonly change = computed(() => this.changes().find((item) => item.id === this.changeId));
   readonly selectedTab = signal<DetailTab>('overview');
   readonly editing = signal(false);
@@ -1006,6 +1044,12 @@ export class ChangeDetailComponent {
     this.issues().some((issue) => issue.severity === 'blocker'),
   );
 
+  /** 容量门禁拒绝本次保存时展示，编辑草稿保持不丢 */
+  readonly capacityError = computed(() => {
+    const error = this.storeCapacityError();
+    return error && error.changeId === this.changeId && this.editing() ? error : null;
+  });
+
   readonly pendingStage = computed<ApprovalStage | null>(() => {
     const item = this.change();
     if (!item || !['submitted', 'rejected'].includes(item.status)) {
@@ -1023,11 +1067,13 @@ export class ChangeDetailComponent {
     if (!item) {
       return;
     }
+    this.store.dispatch(ChangeRequestActions.dismissCapacityError());
     this.draft.set(structuredClone(item));
     this.editing.set(true);
   }
 
   cancelEdit(): void {
+    this.store.dispatch(ChangeRequestActions.dismissCapacityError());
     this.editing.set(false);
     this.draft.set(null);
   }
@@ -1058,9 +1104,14 @@ export class ChangeDetailComponent {
     if (!draft) {
       return;
     }
+    const beforeVersion = this.change()?.version ?? 0;
     this.store.dispatch(ChangeRequestActions.updateChange({ change: draft }));
-    this.editing.set(false);
-    this.draft.set(null);
+    // 容量门禁拒绝时版本号不变，保持编辑态并展示原因，草稿不丢
+    const afterVersion = this.change()?.version ?? 0;
+    if (afterVersion !== beforeVersion) {
+      this.editing.set(false);
+      this.draft.set(null);
+    }
   }
 
   submitForReview(): void {
@@ -1201,6 +1252,28 @@ export class ChangeDetailComponent {
       return '审批已冻结';
     }
     return '方案草稿';
+  }
+
+  demandText(change: ChangeRequest): string {
+    if (!change.capacity.datacenterId) {
+      return '未指定机房';
+    }
+    const pool = this.ledger().pools.find(
+      (item) => item.datacenterId === change.capacity.datacenterId,
+    );
+    return `${pool?.datacenterName ?? change.capacity.datacenterId} · ${demandLabel(change.capacity)}`;
+  }
+
+  reservationText(change: ChangeRequest): string {
+    const reservations = reservationsForChange(this.ledger(), change.id);
+    const active = reservations.find((reservation) => reservation.status === 'reserved');
+    if (active) {
+      return `预留中（${active.id}）`;
+    }
+    if (reservations.length > 0) {
+      return '已释放';
+    }
+    return change.status === 'draft' ? '提交审批时自动预留' : '无预留';
   }
 
   decisionLabel(decision: DeviationRecord['decision']): string {

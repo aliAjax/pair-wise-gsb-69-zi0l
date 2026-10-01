@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { CapacityLedger, validateCapacity } from '../../models/capacity.model';
 import {
   ChangeRequest,
   ValidationIssue,
@@ -116,8 +117,15 @@ import {
 export class ValidationPanelComponent {
   readonly change = input.required<ChangeRequest>();
   readonly allChanges = input.required<ChangeRequest[]>();
+  readonly ledger = input<CapacityLedger | null>(null);
 
-  readonly issues = computed(() => validateChange(this.change(), this.allChanges()));
+  readonly issues = computed(() => {
+    const ledger = this.ledger();
+    return [
+      ...validateChange(this.change(), this.allChanges()),
+      ...(ledger ? validateCapacity(this.change(), this.allChanges(), ledger) : []),
+    ];
+  });
   readonly blockers = computed(
     () => this.issues().filter((issue) => issue.severity === 'blocker').length,
   );

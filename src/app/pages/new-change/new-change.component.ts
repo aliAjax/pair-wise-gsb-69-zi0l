@@ -1,11 +1,20 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { Store } from '@ngrx/store';
 import { ValidationPanelComponent } from '../../components/validation-panel/validation-panel.component';
+import { validateCapacity } from '../../models/capacity.model';
 import {
   APPROVAL_ORDER,
+  CapacityDemand,
   ChangeRequest,
   ChangeStep,
   RESOURCE_LABELS,
@@ -15,7 +24,11 @@ import {
   validateChange,
 } from '../../models/change-request.model';
 import { ChangeRequestActions } from '../../store/change-request.actions';
-import { selectAllChanges } from '../../store/change-request.selectors';
+import {
+  selectAllChanges,
+  selectCapacityError,
+  selectLedger,
+} from '../../store/change-request.selectors';
 
 @Component({
   selector: 'app-new-change',
@@ -247,13 +260,92 @@ import { selectAllChanges } from '../../store/change-request.selectors';
         <div class="section-heading">
           <span>05</span>
           <div>
+            <h2>容量需求</h2>
+            <p>提交审批前将按此处需求预留机房容量，容量不足会被拒绝。</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <clr-select-container>
+            <label class="required">目标机房</label>
+            <select
+              clrSelect
+              [ngModel]="draft().capacity.datacenterId"
+              (ngModelChange)="updateCapacity('datacenterId', $event)"
+            >
+              <option value="">请选择机房</option>
+              @for (pool of pools(); track pool.datacenterId) {
+                <option [value]="pool.datacenterId">
+                  {{ pool.datacenterName }}（余量：机柜 {{ pool.rackUnits }}U · 网络
+                  {{ pool.networkGbps }}Gbps · 服务 {{ pool.serviceSlots }} 实例）
+                </option>
+              }
+            </select>
+          </clr-select-container>
+          <clr-input-container>
+            <label>机柜需求（U）</label>
+            <input
+              clrNumberInput
+              type="number"
+              min="0"
+              [ngModel]="draft().capacity.rackUnits"
+              (ngModelChange)="updateCapacity('rackUnits', $event)"
+            />
+          </clr-input-container>
+          <clr-input-container>
+            <label>网络带宽（Gbps）</label>
+            <input
+              clrNumberInput
+              type="number"
+              min="0"
+              [ngModel]="draft().capacity.networkGbps"
+              (ngModelChange)="updateCapacity('networkGbps', $event)"
+            />
+          </clr-input-container>
+          <clr-input-container>
+            <label>服务实例数</label>
+            <input
+              clrNumberInput
+              type="number"
+              min="0"
+              [ngModel]="draft().capacity.serviceSlots"
+              (ngModelChange)="updateCapacity('serviceSlots', $event)"
+            />
+          </clr-input-container>
+        </div>
+        @if (capacityIssues().length) {
+          <div class="capacity-preview">
+            @for (issue of capacityIssues(); track issue.id) {
+              <p>{{ issue.detail }}</p>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="form-surface">
+        <div class="section-heading">
+          <span>06</span>
+          <div>
             <h2>提交前校验</h2>
             <p>阻断项未清零时仍可保存草稿，但会阻止进入会签。</p>
           </div>
         </div>
-        <app-validation-panel [change]="draft()" [allChanges]="allChanges()" />
+        <app-validation-panel
+          [change]="draft()"
+          [allChanges]="allChanges()"
+          [ledger]="ledger()"
+        />
       </section>
     </div>
+
+    @if (submitError(); as error) {
+      <clr-alert clrAlertType="danger" [clrAlertClosable]="false" class="submit-error">
+        <clr-alert-item>
+          <span class="alert-text">
+            提交被拒绝，草稿已保留：{{ error.reasons.join('；') }}。请调整窗口或容量需求后重新提交。
+          </span>
+        </clr-alert-item>
+      </clr-alert>
+    }
 
     <footer class="action-bar">
       <button class="btn" type="button" (click)="cancel()">取消</button>
@@ -390,6 +482,23 @@ import { selectAllChanges } from '../../store/change-request.selectors';
         color: #777;
       }
 
+      .capacity-preview {
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-left: 3px solid #c21d00;
+        background: #fbece8;
+      }
+
+      .capacity-preview p {
+        margin: 4px 0;
+        color: #8e260f;
+        font-size: 12px;
+      }
+
+      .submit-error {
+        margin-top: 18px;
+      }
+
       .action-bar {
         position: sticky;
         bottom: 0;
@@ -433,6 +542,8 @@ export class NewChangeComponent {
   private readonly router = inject(Router);
 
   readonly allChanges = this.store.selectSignal(selectAllChanges);
+  readonly ledger = this.store.selectSignal(selectLedger);
+  readonly capacityError = this.store.selectSignal(selectCapacityError);
   readonly draft = signal<ChangeRequest>(createEmptyChange());
   readonly resourceId = signal('');
   readonly resourceName = signal('');
@@ -444,14 +555,44 @@ export class NewChangeComponent {
   readonly stepCommand = signal('');
   readonly resourceTypes: ResourceType[] = ['datacenter', 'rack', 'network', 'storage', 'service'];
 
+  /** 已落库的草稿 id：重复保存走更新而不是重复创建 */
+  private readonly createdId = signal<string | null>(null);
+
+  readonly pools = computed(() => this.ledger().pools);
+
+  readonly capacityIssues = computed(() =>
+    validateCapacity(this.draft(), this.allChanges(), this.ledger()),
+  );
+
   readonly blockers = computed(
     () =>
       validateChange(this.draft(), this.allChanges()).some(
         (issue) => issue.severity === 'blocker',
       ) ||
+      this.capacityIssues().length > 0 ||
       this.draft().resources.length === 0 ||
       this.draft().steps.length === 0,
   );
+
+  /** 提交被容量门禁拒绝时展示原因，草稿保留在页面与列表中 */
+  readonly submitError = computed(() => {
+    const error = this.capacityError();
+    const id = this.createdId();
+    return error && error.changeId === id ? error : null;
+  });
+
+  constructor() {
+    // 提交成功（状态进入待会签）后才离开编辑页
+    effect(() => {
+      const id = this.createdId();
+      const submitted = id
+        ? this.allChanges().find((change) => change.id === id && change.status === 'submitted')
+        : undefined;
+      if (submitted) {
+        void this.router.navigate(['/changes', submitted.id]);
+      }
+    });
+  }
 
   onCallText(): string {
     return this.draft().onCall.join('、');
@@ -475,6 +616,16 @@ export class NewChangeComponent {
     this.draft.update((draft) => ({
       ...draft,
       window: { ...draft.window, observationWindowMinutes: Number(value) || 0 },
+    }));
+  }
+
+  updateCapacity<K extends keyof CapacityDemand>(key: K, value: CapacityDemand[K]): void {
+    this.draft.update((draft) => ({
+      ...draft,
+      capacity: {
+        ...draft.capacity,
+        [key]: key === 'datacenterId' ? value : Number(value) || 0,
+      },
     }));
   }
 
@@ -567,11 +718,19 @@ export class NewChangeComponent {
       ...this.draft(),
       approvals: APPROVAL_ORDER.map((stage) => ({ stage, state: 'pending' as const })),
     };
-    this.store.dispatch(ChangeRequestActions.createChange({ change: draft }));
-    if (submit) {
-      this.store.dispatch(ChangeRequestActions.submitForReview({ id: draft.id }));
+    const existingId = this.createdId();
+    if (existingId) {
+      this.store.dispatch(ChangeRequestActions.updateChange({ change: draft }));
+    } else {
+      this.store.dispatch(ChangeRequestActions.createChange({ change: draft }));
+      this.createdId.set(draft.id);
     }
-    void this.router.navigate(['/changes', draft.id]);
+    if (submit) {
+      // 容量不足时 reducer 会拒绝提交并保留草稿，页面停留展示原因
+      this.store.dispatch(ChangeRequestActions.submitForReview({ id: draft.id }));
+    } else {
+      void this.router.navigate(['/changes', draft.id]);
+    }
   }
 
   cancel(): void {

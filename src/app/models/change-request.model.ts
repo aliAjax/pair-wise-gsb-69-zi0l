@@ -22,6 +22,13 @@ export interface ChangeResource {
   dependencies: string[];
 }
 
+export interface CapacityDemand {
+  datacenterId: string;
+  rackUnits: number;
+  networkGbps: number;
+  serviceSlots: number;
+}
+
 export interface ChangeStep {
   id: string;
   phase: StepPhase;
@@ -78,6 +85,9 @@ export interface ChangeRequest {
   approvals: ApprovalRecord[];
   deviations: DeviationRecord[];
   audit: AuditRecord[];
+  capacity: CapacityDemand;
+  reservationIds: string[];
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -91,7 +101,9 @@ export interface ValidationIssue {
     | 'WINDOW_CONFLICT'
     | 'ROLLBACK_UNEXECUTABLE'
     | 'OBSERVATION_TOO_SHORT'
-    | 'OWNER_MISSING';
+    | 'OWNER_MISSING'
+    | 'CAPACITY_INSUFFICIENT'
+    | 'CRITICAL_SLOT_FULL';
   title: string;
   detail: string;
   suggestedAction: string;
@@ -167,6 +179,14 @@ export function createEmptyChange(): ChangeRequest {
     approvals: createEmptyApprovals(),
     deviations: [],
     audit: [],
+    capacity: {
+      datacenterId: '',
+      rackUnits: 4,
+      networkGbps: 10,
+      serviceSlots: 1,
+    },
+    reservationIds: [],
+    version: 1,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   };
@@ -177,7 +197,10 @@ export function toLocalInputValue(date: Date): string {
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
 }
 
-export function isWindowOverlapping(left: ChangeWindow, right: ChangeWindow): boolean {
+export function isWindowOverlapping(
+  left: Pick<ChangeWindow, 'start' | 'end'>,
+  right: Pick<ChangeWindow, 'start' | 'end'>,
+): boolean {
   const leftStart = new Date(left.start).getTime();
   const leftEnd = new Date(left.end).getTime();
   const rightStart = new Date(right.start).getTime();
